@@ -200,9 +200,13 @@ class GPT(nn.Module):
 
 torch.manual_seed(1337)
 
+device = "cpu"
+if torch.cuda.is_available():
+    device = "cuda"
+print(f"Using device: {device}")
+
 num_return_sequences=5
 max_length = 50
-device = "cpu"
 model_name = "gpt2"
 
 model = GPT.from_pretrained(model_name)
@@ -219,7 +223,7 @@ tokens = tokens.unsqueeze(0).repeat(num_return_sequences, 1) # (num_return_seque
 x = tokens.to(device)
 
 with torch.no_grad():
-    while x.shape[0] < max_length:
+    while x.shape[1] < max_length:
         logits, _ = model(x) # (B, T, vocab_size)
 
         # Take the last logits
