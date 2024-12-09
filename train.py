@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 
 from dataclasses import dataclass
+from torch.nn import functional as F
 
 @dataclass
 class GPTConfig:
@@ -23,6 +24,7 @@ class CausalSelfAttention(nn.Module):
         assert config.n_embd % config.n_heads == 0 # heads must add up to the number of embeddings
 
         self.n_heads = config.n_heads
+        self.n_embd = config.n_embd
 
         # Key, query, and value projections for all heads, but in a batch
         self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd)
@@ -42,9 +44,9 @@ class CausalSelfAttention(nn.Module):
         # e.g. in GPT-2 (124M), n_head=12, hs=64, so nh*hs=C=768 channels in the Transformer
         qkv = self.c_attn(x)
         q, k, v = qkv.split(self.n_embd, dim=2)
-        k = k.view(B, T, self.n_heads, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
-        q = q.view(B, T, self.n_heads, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
-        v = v.view(B, T, self.n_heads, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        k = k.view(B, T, self.n_heads, C // self.n_heads).transpose(1, 2) # (B, nh, T, hs)
+        q = q.view(B, T, self.n_heads, C // self.n_heads).transpose(1, 2) # (B, nh, T, hs)
+        v = v.view(B, T, self.n_heads, C // self.n_heads).transpose(1, 2) # (B, nh, T, hs)
 
         # Attention, materialize the large (T, T) matrix for all queries and keys
         att = (q @ k.transpose(-2, -1)) * k.shape[-1]**-0.5 # (B, nh, T, hs) @ (B, nh, hs, T) -> (B, nh, T, T)
@@ -110,8 +112,30 @@ class GPT(nn.Module):
         ))
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False) # embeddings to logits
 
-    def forward(self):
-        pass
+    def forward(self, idx, targets=None):
+        # idx is of shape (B, T)
+        B, T = idx.shape
+        assert T <= self.config.block_size, f"Cannot forward sequence of length {T}, block size is only {self.config.block_size}"
+
+        # forward the token and position embeddings
+        tok_emb = self.transformer.wte(idx) # token embeddings of shape (B, T, n_embd)
+        pos = torch.arange(0, T, dtype=torch.long, device=idx.device) # shape (T)
+        pos_emb = self.transformer.wpe(pos) # position embeddings of shape (T, n_embd)
+        x = tok_emb + pos_emb
+
+        # Forward the blocks of the transformer
+        for block in self.transformer.h:
+            x = block(x)
+
+        # forward the final layernorm and the classifier
+        x = self.transformer.ln_f(x)
+        logits = self.lm_head(x) # (B, T, vocab_size)
+
+        loss = None
+        if targets is not None:
+            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
+
+        return logits, loss
 
     @classmethod
     def from_pretrained(cls, model_type):
@@ -141,7 +165,8 @@ class GPT(nn.Module):
         model = GPT(GPTConfig(**config_args))
         sd = model.state_dict()
         sd_keys = sd.keys()
-        sd_keys = [k for k in sd_keys if not k.endswith('.attn.bias')] # discard this mask / buffer, not a param
+        # Discard this mask / buffer, not a param
+        sd_keys = [k for k in sd_keys if not k.endswith('.attn.bias')]
 
         # Init a huggingface/transformers model
         model_hf = GPT2LMHeadModel.from_pretrained(model_type)
@@ -173,4 +198,51 @@ class GPT(nn.Module):
         return model
 
 
-model = GPT.from_pretrained("gpt2")
+torch.manual_seed(1337)
+
+num_return_sequences=5
+max_length = 50
+device = "cpu"
+model_name = "gpt2"
+
+model = GPT.from_pretrained(model_name)
+model.eval()
+model.to(device)
+
+# Prefix tokens
+import tiktoken
+
+enc = tiktoken.get_encoding(model_name)
+tokens = enc.encode("Hello world,")
+tokens = torch.tensor(tokens, dtype=torch.long) # (3,)
+tokens = tokens.unsqueeze(0).repeat(num_return_sequences, 1) # (num_return_sequences, 3)
+x = tokens.to(device)
+
+with torch.no_grad():
+    while x.shape[0] < max_length:
+        logits, _ = model(x) # (B, T, vocab_size)
+
+        # Take the last logits
+        logits = logits[:, -1, :]
+
+        # Get the probabilities
+        probs = F.softmax(logits, dim=-1)
+
+        # Top-k sampling of 50 (HF's default)
+        # We don't want to sample very rare tokens.
+        topk_probs, topk_indices = torch.topk(probs, 50, dim=-1) # (B, 50)
+
+        # Select a single token from the top-k probs
+        ix = torch.multinomial(topk_probs, 1) # (B, 1)
+
+        # Gather the corresponding indices
+        xcol = torch.gather(topk_indices, -1, ix) # (B, 1)
+
+        # Append to the sequence
+        x = torch.cat((x, xcol), dim=1)
+
+# Print the generated text
+for i in range(num_return_sequences):
+    tokens = x[i, :max_length].tolist()
+    decoded = enc.decode(tokens)
+    print(f"> {decoded}")
