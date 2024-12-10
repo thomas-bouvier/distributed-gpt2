@@ -114,6 +114,10 @@ class GPT(nn.Module):
         ))
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False) # embeddings to logits
 
+        # Weight sharing scheme between token embeddings and output linear layers.
+        # This saves weights, as suggested in the Attention paper
+        self.transformer.wte.weight = self.lm_head.weight
+
     def forward(self, idx, targets=None):
         # idx is of shape (B, T)
         B, T = idx.shape
