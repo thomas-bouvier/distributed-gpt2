@@ -4,6 +4,8 @@ import torch.nn as nn
 from dataclasses import dataclass
 from torch.nn import functional as F
 
+from load import DataLoader
+
 @dataclass
 class GPTConfig:
     block_size: int = 1024
@@ -210,42 +212,25 @@ max_length = 50
 model_name = "gpt2"
 epochs = 50
 lr = 3e-4
+bs = 4
 
-# Load some input data and prefix tokens
-def load_data():
-    import tiktoken
-    enc = tiktoken.get_encoding(model_name)
-
-    with open("input.txt", "r") as f:
-        data = f.read()
-
-    data = data[:1000]
-    tokens = enc.encode(data)
-    B, T = 4, 32 # T = block_size = bs
-    buf = torch.tensor(tokens[:B * T + 1])
-
-    x = buf[:-1].view(B, T)
-    y = buf[1:].view(B, T)
-
-    return x.to(device), y.to(device)
+# Load some input data
+train_loader = DataLoader(encoding=model_name, B=4, T=bs)
 
 model = GPT(GPTConfig())
 model.eval()
 model.to(device)
 
-x, y = load_data()
-logits, loss = model(x, y) # init loss should be -ln(50257)
-print(loss)
-
 optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
 
-for step in range(epochs):
-    optimizer.zero_grad()
-    logits, loss = model(x, y)
-    loss.backward()
-    optimizer.step()
+for epoch in range(epochs):
+    for x, y in train_loader:
+        optimizer.zero_grad()
+        logits, loss = model(x, y)
+        loss.backward()
+        optimizer.step()
 
-    print(f"Step {step}, loss: {loss.item()}")
+        print(f"Epoch {epoch}, loss: {loss.item()}")
 
 import sys; sys.exit(0)
 
