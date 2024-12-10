@@ -5,8 +5,8 @@ The simplest, fastest repository for training/finetuning medium-sized GPTs. It i
 | Model  | Architecture                                                                      | Max Parameter Count | Training Data                                                                                                               |
 |--------|-----------------------------------------------------------------------------------|---------------------|-----------------------------------------------------------------------------------------------------------------------------|
 | GPT-1  | 12-level, 12-headed Transformer decoder (no encoder), followed by linear-softmax. | 0.12 billion        | BookCorpus: 4.5 GB of text, from 7000 unpublished books of various genres.                                                  |
-| GPT-2  | GPT-1, but with modified normalization                                            | 1.5 billion         | WebText: 40 GB of text, 8 million documents, from 45 million webpages upvoted on Reddit.                                    |
-| GPT-3  | GPT-2, but with modification to allow larger scaling.                             | 175 billion         | 570 GB plaintext, 300 billion tokens of CommonCrawl, WebText, English Wikipedia, and two books corpora (Books1 and Books2). |
+| [GPT-2](https://cdn.openai.com/better-language-models/language_models_are_unsupervised_multitask_learners.pdf)  | GPT-1, but with modified normalization                                            | 1.5 billion         | WebText: 40 GB of text, 8 million documents, from 45 million webpages upvoted on Reddit.                                    |
+| [GPT-3](https://arxiv.org/abs/2005.14165)  | GPT-2, but with modification to allow larger scaling.                             | 175 billion         | 570 GB plaintext, 300 billion tokens of CommonCrawl, WebText, English Wikipedia, and two books corpora (Books1 and Books2). |
 
 ## Setup
 
