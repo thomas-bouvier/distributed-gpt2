@@ -16,9 +16,7 @@ class GPTConfig:
 
 
 class CausalSelfAttention(nn.Module):
-    """
-    Multiple heads are managed in this class.
-    """
+    """Multiple heads are managed in this class."""
 
     def __init__(self, config):
         super().__init__()
@@ -33,6 +31,7 @@ class CausalSelfAttention(nn.Module):
 
         # Output projection
         self.c_proj = nn.Linear(config.n_embd, config.n_embd)
+        self.c_proj.NANOGPT_SCALE_INIT = 1 # flag to scale residual weights at init
 
         # Not really a bias, more of a mask. But following OpenAI naming
         self.register_buffer("bias", torch.tril(torch.ones(config.block_size, config.block_size))
@@ -73,6 +72,7 @@ class MLP(nn.Module):
         self.c_fc = nn.Linear(config.n_embd, config.n_embd * 4)
         self.gelu = nn.GELU(approximate="tanh")
         self.c_proj = nn.Linear(config.n_embd * 4, config.n_embd)
+        self.c_proj.NANOGPT_SCALE_INIT = 1 # flag to scale residual weights at init
     
     def forward(self, x):
         x = self.c_fc(x)
@@ -87,9 +87,9 @@ class Block(nn.Module):
         super().__init__()
 
         self.ln_1 = nn.LayerNorm(config.n_embd)
-        self.attn = CausalSelfAttention(config)
+        self.attn = CausalSelfAttention(config) # residual layer #1
         self.ln_2 = nn.LayerNorm(config.n_embd)
-        self.mlp = MLP(config)
+        self.mlp = MLP(config) # residual layer #2
     
     def forward(self, x):
         x = x + self.attn(self.ln_1(x)) # communication, reduce operation
@@ -118,6 +118,26 @@ class GPT(nn.Module):
         # This saves weights, as suggested in the Attention paper
         self.transformer.wte.weight = self.lm_head.weight
 
+        # Init params by iterating on sub-modules
+        self.apply(self._init_weights)
+
+    def _init_weights(self, module):
+        std = 0.02
+
+        if isinstance(module, nn.Linear):
+            # From the GPT-2 paper, weights of residual layers should be scaled
+            # by N ** -0.5 at init, N being the number of residual layers.
+            if hasattr(module, 'NANOGPT_SCALE_INIT'):
+                std *= (2 * self.config.n_layers) ** -0.5 # x2 because there are two residual layers in each Block
+
+            torch.nn.init.normal_(module.weight, mean=0.0, std=std)
+
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
+
+        elif isinstance(module, nn.Embedding):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=std)
+
     def forward(self, idx, targets=None):
         # idx is of shape (B, T)
         B, T = idx.shape
@@ -145,8 +165,7 @@ class GPT(nn.Module):
 
     @classmethod
     def from_pretrained(cls, model_type):
-        """
-        Load pre-trained GPT-2 model weights from Hugging Face.
+        """Load pre-trained GPT-2 model weights from Hugging Face.
 
         Attributes defined in our GPT must match with the naming of original
         weights from OpenAI.
