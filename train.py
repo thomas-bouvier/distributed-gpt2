@@ -1,3 +1,4 @@
+import time
 import torch
 import torch.nn as nn
 
@@ -224,36 +225,56 @@ class GPT(nn.Module):
 
 
 torch.manual_seed(1337)
+if torch.cuda.is_available():
+    torch.cuda.manual_seed(1337)
 
 device = "cpu"
 if torch.cuda.is_available():
     device = "cuda"
 print(f"Using device: {device}")
 
+# Using TensorFloat if possible (10 bits for mantissa)
+torch.set_float32_matmul_precision("high")
+
 num_return_sequences=5
 max_length = 50
 model_name = "gpt2"
 epochs = 50
 lr = 3e-4
-bs = 4
+bs = 16
+context_length = 1024
 
 # Load some input data
-train_loader = DataLoader(encoding=model_name, B=4, T=bs)
+train_loader = DataLoader(encoding=model_name, B=bs, T=context_length)
 
 model = GPT(GPTConfig())
 model.eval()
 model.to(device)
+model = torch.compile(model)
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
 
 for epoch in range(epochs):
+    t0 = time.time()
+
     for x, y in train_loader:
         optimizer.zero_grad()
-        logits, loss = model(x, y)
+
+        # Mixed precision using bf16, avoiding using gradient scalers
+        with torch.autocast(device_type=device, dtype=torch.bfloat16):
+            logits, loss = model(x, y)
+
         loss.backward()
         optimizer.step()
 
-        print(f"Epoch {epoch}, loss: {loss.item()}")
+        torch.cuda.synchronize()
+        t1 = time.time()
+
+        dt = (t1 - t0) * 1000 # milliseconds
+        tokens_per_sec = (train_loader.B * train_loader.T) / (t1 - t0)
+
+        print(f"Epoch {epoch}, loss: {loss.item()}, dt: {dt}, tok/sec: {tokens_per_sec}")
+        t0 = time.time()
 
 import sys; sys.exit(0)
 
