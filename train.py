@@ -208,19 +208,65 @@ print(f"Using device: {device}")
 num_return_sequences=5
 max_length = 50
 model_name = "gpt2"
+epochs = 50
+lr = 3e-4
+
+# Load some input data and prefix tokens
+def load_data():
+    import tiktoken
+    enc = tiktoken.get_encoding(model_name)
+
+    with open("input.txt", "r") as f:
+        data = f.read()
+
+    data = data[:1000]
+    tokens = enc.encode(data)
+    B, T = 4, 32 # T = block_size = bs
+    buf = torch.tensor(tokens[:B * T + 1])
+
+    x = buf[:-1].view(B, T)
+    y = buf[1:].view(B, T)
+
+    return x.to(device), y.to(device)
+
+model = GPT(GPTConfig())
+model.eval()
+model.to(device)
+
+x, y = load_data()
+logits, loss = model(x, y) # init loss should be -ln(50257)
+print(loss)
+
+optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
+
+for step in range(epochs):
+    optimizer.zero_grad()
+    logits, loss = model(x, y)
+    loss.backward()
+    optimizer.step()
+
+    print(f"Step {step}, loss: {loss.item()}")
+
+import sys; sys.exit(0)
+
+####################################
+# Inference
+####################################
+
+def prefix_tokens():
+    import tiktoken
+
+    enc = tiktoken.get_encoding(model_name)
+    tokens = enc.encode("Hello world,")
+    tokens = torch.tensor(tokens, dtype=torch.long) # (3,)
+    tokens = tokens.unsqueeze(0).repeat(num_return_sequences, 1) # (num_return_sequences, 3)
+    return tokens.to(device)
 
 model = GPT.from_pretrained(model_name)
 model.eval()
 model.to(device)
 
-# Prefix tokens
-import tiktoken
-
-enc = tiktoken.get_encoding(model_name)
-tokens = enc.encode("Hello world,")
-tokens = torch.tensor(tokens, dtype=torch.long) # (3,)
-tokens = tokens.unsqueeze(0).repeat(num_return_sequences, 1) # (num_return_sequences, 3)
-x = tokens.to(device)
+x = prefix_tokens()
 
 with torch.no_grad():
     while x.shape[1] < max_length:
