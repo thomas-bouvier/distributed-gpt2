@@ -51,11 +51,13 @@ class CausalSelfAttention(nn.Module):
         v = v.view(B, T, self.n_heads, C // self.n_heads).transpose(1, 2) # (B, nh, T, hs)
 
         # Attention, materialize the large (T, T) matrix for all queries and keys
-        att = (q @ k.transpose(-2, -1)) * k.shape[-1]**-0.5 # (B, nh, T, hs) @ (B, nh, hs, T) -> (B, nh, T, T)
-        att = att.masked_fill(self.bias[:, :, :T, :T] == 0, float("-inf")) # (B, nh, T, T)
-        att = F.softmax(att, dim=-1) # make logits sum to one, (B, nh, T, T)
+        #att = (q @ k.transpose(-2, -1)) * k.shape[-1]**-0.5 # (B, nh, T, hs) @ (B, nh, hs, T) -> (B, nh, T, T)
+        #att = att.masked_fill(self.bias[:, :, :T, :T] == 0, float("-inf")) # (B, nh, T, T)
+        #att = F.softmax(att, dim=-1) # make logits sum to one, (B, nh, T, T)
+        #y = att @ v # (B, nh, T, T) @ (B, nh, T, hs) = (B, nh, T, hs)
 
-        y = att @ v # (B, nh, T, T) @ (B, nh, T, hs) = (B, nh, T, hs)
+        # Flash attention, way more efficient
+        y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
 
         # Re-assemble all head outputs side by side
         y = y.transpose(1, 2).contiguous().view(B, T, C)
